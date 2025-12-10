@@ -1,0 +1,124 @@
+import streamlit as st
+import pandas as pd
+import plotly.express as px
+from Utils import load_data, local_css, SDR_RED, SDR_GREY
+
+# 1. CONFIGURATION
+st.set_page_config(page_title="SDR - Profilage Oral", page_icon="🔴", layout="wide")
+local_css()
+
+# 2. CHARGEMENT DONNÉES
+# Assure-toi que le fichier s'appelle bien ainsi ou renome-le 'data.csv'
+df = load_data("Datagps.xlsx - data.csv")
+
+# 3. SIDEBAR (Filtres)
+st.sidebar.title("SDR DATA")
+# Logo (URL externe pour éviter les erreurs de fichier local manquant)
+st.sidebar.image("https://upload.wikimedia.org/wikipedia/fr/thumb/2/27/Logo_Stade_de_Reims_2020.svg/1200px-Logo_Stade_de_Reims_2020.svg.png", width=100)
+
+page = st.sidebar.radio("Navigation", ["📊 Profilage (Barres)", "📈 Suivi Saison"])
+
+st.sidebar.markdown("---")
+
+if not df.empty:
+    # Filtre Equipe
+    teams = df['team'].unique()
+    sel_team = st.sidebar.selectbox("Équipe (Catégorie)", teams)
+    df_team = df[df['team'] == sel_team]
+    
+    # Filtre Joueur
+    players = df_team['DisplayName'].unique()
+    sel_player = st.sidebar.selectbox("Joueur Cible", players)
+    
+    # Données spécifiques
+    df_player = df_team[df_team['DisplayName'] == sel_player]
+    
+    # Récupération du poste
+    if 'position' in df_player.columns and not df_player['position'].isna().all():
+        player_pos = df_player['position'].iloc[0]
+    else:
+        player_pos = "Inconnu"
+        
+    df_pos = df_team[df_team['position'] == player_pos]
+else:
+    st.error("Erreur: Impossible de charger les données.")
+    st.stop()
+
+# --- PAGE 1 : PROFILAGE (HISTOGRAMMES COMPARATIFS) ---
+if page == "📊 Profilage (Barres)":
+    st.title(f"Profilage : {sel_player}")
+    st.markdown(f"**Poste :** {player_pos} | **Comparaison :** vs Moyenne Poste, Moyenne Groupe & Record")
+
+    # Métriques clés à analyser
+    metrics_map = {
+        'maxSpeed': 'Vitesse Max (km/h)',
+        'distanceTotal': 'Distance Totale (m)',
+        'distanceZ5Abs': 'Haute Intensité >20km/h (m)'
+    }
+
+    # Pour chaque métrique, on crée un graphique
+    for col_kpi, label_kpi in metrics_map.items():
+        if col_kpi in df.columns:
+            st.markdown("---")
+            c1, c2 = st.columns([1, 3])
+            
+            with c1:
+                st.subheader(label_kpi)
+                val_player = df_player[col_kpi].mean()
+                st.metric("Moyenne Joueur", f"{val_player:.2f}")
+            
+            with c2:
+                # 1. Calcul des valeurs
+                val_avg_pos = df_pos[col_kpi].mean()     # Moyenne Poste
+                val_avg_team = df_team[col_kpi].mean()   # Moyenne Equipe
+                
+                # Record (Max)
+                idx_max = df_team[col_kpi].idxmax()
+                val_record = df_team.loc[idx_max, col_kpi]
+                name_record = df_team.loc[idx_max, 'DisplayName']
+                
+                # 2. Création du DataFrame pour le graphique
+                data_comp = pd.DataFrame([
+                    {"Catégorie": f"Joueur ({sel_player})", "Valeur": val_player, "Color": SDR_RED},
+                    {"Catégorie": f"Moy. Poste ({player_pos})", "Valeur": val_avg_pos, "Color": "grey"},
+                    {"Catégorie": f"Moy. Équipe ({sel_team})", "Valeur": val_avg_team, "Color": "lightgrey"},
+                    {"Catégorie": f"RECORD ({name_record})", "Valeur": val_record, "Color": "black"}
+                ])
+                
+                # 3. Histogramme
+                fig = px.bar(
+                    data_comp, 
+                    x="Catégorie", 
+                    y="Valeur", 
+                    text="Valeur",
+                    color="Catégorie",
+                    color_discrete_map={
+                        f"Joueur ({sel_player})": SDR_RED,
+                        f"Moy. Poste ({player_pos})": "grey",
+                        f"Moy. Équipe ({sel_team})": "lightgrey",
+                        f"RECORD ({name_record})": "black"
+                    }
+                )
+                
+                fig.update_traces(texttemplate='%{text:.2f}', textposition='auto')
+                fig.update_layout(showlegend=False, margin=dict(t=10, b=10))
+                st.plotly_chart(fig, use_container_width=True)
+
+# --- PAGE 2 : SUIVI LONGITUDINAL ---
+elif page == "📈 Suivi Saison":
+    st.title(f"Suivi Temporel : {sel_player}")
+    
+    metrique = st.selectbox("Indicateur", ['maxSpeed', 'distanceTotal', 'distanceZ5Abs'])
+    
+    # Graphique ligne
+    fig_line = px.line(df_player, x='sessionDate', y=metrique, markers=True,
+                       title=f"Evolution de {metrique} (Matchs & Entraînements)")
+    fig_line.update_traces(line_color=SDR_RED, line_width=3)
+    
+    # Ajout moyenne joueur
+    mean_val = df_player[metrique].mean()
+    fig_line.add_hline(y=mean_val, line_dash="dash", line_color="black", annotation_text="Moyenne Saison")
+    
+    st.plotly_chart(fig_line, use_container_width=True)
+
+    #streamlit run app_oral.py
